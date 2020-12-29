@@ -1,4 +1,4 @@
-""" Targeted subspace principal component analysis (tsPCA) """
+""" targeted subspace Principal Component Analysis (tsPCA) """
 
 # Author: Ryoma Hattori <rhattori0204@gmail.com>
 #
