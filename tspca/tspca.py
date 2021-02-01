@@ -10,25 +10,23 @@ from scipy.stats import pearsonr
 import numpy as np
 
 
-def tsPCA(input, targets, time_range, n_dim, target_types, reg, pc_num, axis_type, input_test, targets_test):
-
+def tsPCA2(input, targets, time_range, n_dim, reg=None, preprocessing_pc=-1, input_test=None, targets_test=None, decoding=False):
     if reg == None:
-        d_model = linear_model.LogisticRegression(solver='lbfgs', penalty='none', n_jobs=-1, multi_class='auto', fit_intercept=True, max_iter=10000)
-        c_model = linear_model.LinearRegression(n_jobs=-1, fit_intercept=True)
+        model = linear_model.LinearRegression(n_jobs=-1, fit_intercept=True)
     elif reg == 'L1':
-        d_model = linear_model.LogisticRegressionCV(cv=5, Cs=10, solver='saga', penalty='l1', n_jobs=-1, refit=True, multi_class='auto', fit_intercept=True, max_iter=10000)
-        c_model = linear_model.LassoCV(cv=5, n_alphas=10, n_jobs=-1, fit_intercept=True, max_iter=10000)
+        model = linear_model.LassoCV(cv=5, n_alphas=10, n_jobs=-1, fit_intercept=True, max_iter=10000)
     elif reg == 'L2':
-        d_model = linear_model.LogisticRegressionCV(cv=5, Cs=10, solver='lbfgs', penalty='l2', n_jobs=-1, refit=True, multi_class='auto', fit_intercept=True, max_iter=10000)
-        c_model = linear_model.RidgeCV(cv=5, alphas=np.logspace(-3, 1, 10), fit_intercept=True)
-    # c_model.fit(np.mean(Xseq_ready[:, :, :], axis=1), Cc).coef_.shape
-    # d_model.fit(np.mean(Xseq_ready[:, :, :], axis=1), Cc).coef_.squeeze().shape
+        model = linear_model.RidgeCV(cv=5, alphas=np.logspace(-3, 1, 10), fit_intercept=True)
 
-    # if targets.ndim == 1:
-    #     targets = np.repeat(targets[:, np.newaxis], n_dim, axis=1)
-    #     target_types = np.repeat(target_types, n_dim)
-    if pc_num != -1:
-        pca_preprocessing = PCA(n_components=pc_num)
+    n_target = targets.shape[1]
+
+    if decoding == True:
+        decoder_L2 = {}
+        for target_id in range(n_target):
+            decoder_L2[target_id] = linear_model.RidgeCV(cv=5, alphas=np.logspace(-3, 1, 10), fit_intercept=True)
+
+    if preprocessing_pc != -1:
+        pca_preprocessing = PCA(n_components=preprocessing_pc)
         if len(time_range) == 1:
             pca_preprocessing.fit_transform(input[:, time_range[0], :])
         else:
@@ -38,134 +36,142 @@ def tsPCA(input, targets, time_range, n_dim, target_types, reg, pc_num, axis_typ
             input_test = np.moveaxis(np.matmul(pca_preprocessing.components_, np.moveaxis(input_test, 1, 2)), 1, 2)
 
     if len(time_range) == 1:
-        # predictors = sm.add_constant(input[:, time_range[0], :])
-        predictors = input[:, time_range[0], :]
+        # activity = sm.add_constant(input[:, time_range[0], :])
+        activity = input[:, time_range[0], :]
     else:
-        # predictors = sm.add_constant(np.mean(input[:, time_range, :], axis=1))
-        predictors = np.mean(input[:, time_range, :], axis=1)
-    if target_types[0] == 'c':
-        if axis_type == 'hattori':
-            # ax = sm.OLS(targets[:, 0], predictors).fit().params
-            ax = c_model.fit(predictors, targets[:, 0]).coef_.squeeze()
-        elif axis_type == 'mante':
-            ax = np.zeros(predictors.shape[1])
-            for cell_id in range(predictors.shape[1]):
-                ax[cell_id] = c_model.fit(predictors[:, cell_id, np.newaxis], targets[:, 0]).coef_.squeeze()
-            decoding_mante = np.zeros((input.shape[0], n_dim, targets.shape[1]))
-            decoder_L2 = linear_model.RidgeCV(cv=5, alphas=np.logspace(-3, 1, 10), fit_intercept=True)
-            decoder_L2.fit(predictors, targets[:, 0])
-            decoding_mante[:, 0, 0] = decoder_L2.predict(predictors).squeeze()
-    elif target_types[0] == 'd':
-        if axis_type == 'hattori':
-            # ax = sm.Logit(targets[:, 0], predictors).fit().params
-            ax = d_model.fit(predictors[targets[:, 0]!=0, :], targets[targets[:, 0]!=0, 0]).coef_.squeeze()
-        elif axis_type == 'mante':
-            ax = np.zeros(predictors.shape[1])
-            for cell_id in range(predictors.shape[1]):
-                ax[cell_id] = d_model.fit(predictors[targets[:, 0] != 0, cell_id, np.newaxis], targets[targets[:, 0] != 0, 0]).coef_.squeeze()
-            decoding_mante = np.zeros((input.shape[0], n_dim, targets.shape[1]))
-            decoder_L2 = linear_model.LogisticRegressionCV(cv=5, Cs=10, solver='lbfgs', penalty='l2', n_jobs=-1, refit=True, multi_class='auto', fit_intercept=True, max_iter=10000)
-            decoder_L2.fit(predictors, targets[:, 0])
-            decoding_mante[:, 0, 0] = decoder_L2.predict(predictors).squeeze()
-    # u, s, vh = np.linalg.svd(ax[1:, np.newaxis])
-    u, s, vh = np.linalg.svd(ax[:, np.newaxis])
-    projected = np.matmul(input, u)
-
-    subspace = np.zeros((input.shape[0], input.shape[1], n_dim, targets.shape[1]))
-    subspace[: ,:, 0, 0] = projected[:, :, 0]
-    if input_test is not None:
-        projected_test = np.matmul(input_test, u)
-        subspace_test = np.zeros((input_test.shape[0], input_test.shape[1], n_dim, targets.shape[1]))
-        subspace_test[:, :, 0, 0] = projected_test[:, :, 0]
-        if axis_type == 'mante':
-            decoding_mante_test = np.zeros((input_test.shape[0], n_dim, targets_test.shape[1]))
-            if len(time_range) == 1:
-                predictors_test = input_test[:, time_range[0], :]
-            else:
-                predictors_test = np.mean(input_test[:, time_range, :], axis=1)
-            decoding_mante_test[:, 0, 0] = decoder_L2.predict(predictors_test).squeeze()
-
-    for target_id in range(targets.shape[1]):
-        if target_id == 0:
-            start_dim = 1
+        # activity = sm.add_constant(np.mean(input[:, time_range, :], axis=1))
+        activity = np.mean(input[:, time_range, :], axis=1)
+    ax_nonorthogonal = np.zeros((activity.shape[1], n_target))
+    for cell_id in range(activity.shape[1]):
+        ax_nonorthogonal[cell_id, :] = model.fit(targets, activity[:, cell_id]).coef_.squeeze()
+    if decoding == True:
+        decoded = np.zeros((input.shape[0], n_dim, n_target + 1))
+        for target_id in range(n_target):
+            decoder_L2[target_id].fit(activity, targets[:, target_id])
+            decoded[:, 0, target_id] = decoder_L2[target_id].predict(activity).squeeze()
+    u, s, vh = np.linalg.svd(ax_nonorthogonal)
+    for target_id in range(n_target):
+        if np.dot(ax_nonorthogonal[:, target_id], u[target_id, :]) < 0:
+            u[target_id, :] = -u[target_id, :]
         else:
-            start_dim = 0
-        for dim_id in range(start_dim, n_dim):
-            if len(time_range) == 1:
-                # predictors = sm.add_constant(projected[:, time_range[0], 1:])
-                predictors = projected[:, time_range[0], 1:]
-            else:
-                # predictors = sm.add_constant(np.mean(projected[:, time_range, 1:], axis=1))
-                predictors = np.mean(projected[:, time_range, 1:], axis=1)
-            if target_types[target_id] == 'c':
-                if axis_type == 'hattori':
-                    # ax = sm.OLS(targets[:, dim_id], predictors).fit().params
-                    ax = c_model.fit(predictors, targets[:, target_id]).coef_.squeeze()
-                elif axis_type == 'mante':
-                    ax = np.zeros(predictors.shape[1])
-                    for cell_id in range(predictors.shape[1]):
-                        ax[cell_id] = c_model.fit(predictors[:, cell_id, np.newaxis], targets[:, target_id]).coef_.squeeze()
-                    decoder_L2.fit(predictors, targets[:, target_id])
-                    decoding_mante[:, dim_id, target_id] = decoder_L2.predict(predictors).squeeze()
-            elif target_types[target_id] == 'd':
-                if axis_type == 'hattori':
-                    # ax = sm.Logit(targets[:, dim_id], predictors).fit().params
-                    ax = d_model.fit(predictors[targets[:, target_id]!=0, :], targets[targets[:, target_id]!=0, target_id]).coef_.squeeze()
-                elif axis_type == 'mante':
-                    ax = np.zeros(predictors.shape[1])
-                    for cell_id in range(predictors.shape[1]):
-                        ax[cell_id] = d_model.fit(predictors[targets[:, target_id] != 0, cell_id, np.newaxis], targets[targets[:, target_id] != 0, target_id]).coef_.squeeze()
-                    decoder_L2.fit(predictors, targets[:, target_id])
-                    decoding_mante[:, dim_id, target_id] = decoder_L2.predict(predictors).squeeze()
-            # u, s, vh = np.linalg.svd(ax[1:, np.newaxis])
-            u, s, vh = np.linalg.svd(ax[:, np.newaxis])
-            projected = np.matmul(projected[:, :, 1:], u)
-            subspace[: ,:, dim_id, target_id] = projected[:, :, 0]
-            if input_test is not None:
-                if axis_type == 'mante':
-                    if len(time_range) == 1:
-                        predictors_test = projected_test[:, time_range[0], 1:]
-                    else:
-                        predictors_test = np.mean(projected_test[:, time_range, 1:], axis=1)
-                    decoding_mante_test[:, dim_id, target_id] = decoder_L2.predict(predictors_test).squeeze()
-                projected_test = np.matmul(projected_test[:, :, 1:], u)
-                subspace_test[:, :, dim_id, target_id] = projected_test[:, :, 0]
+            u[target_id, :] = u[target_id, :]
 
-    subspace_remained = projected[:, :, 1:]
-    r = np.zeros((targets.shape[1], n_dim, 2))
-    for target_id in range(targets.shape[1]):
-        for dim_id in range(n_dim):
-            if len(time_range) == 1:
-                r[target_id, dim_id, 0], r[target_id, dim_id, 1] = pearsonr(subspace[:, time_range[0], dim_id, target_id], targets[:, target_id])
-            else:
-                r[target_id, dim_id, 0], r[target_id, dim_id, 1] = pearsonr(np.mean(subspace[:, time_range, dim_id, target_id], axis=1), targets[:, target_id])
+    projected = np.matmul(input, u.T)
+
+    subspace = np.zeros((input.shape[0], input.shape[1], n_dim, n_target + 1))
+    subspace[:, :, 0, :-1] = projected[:, :, :n_target]
     if input_test is not None:
-        r_test = np.zeros((targets.shape[1], n_dim, 2))
-        for target_id in range(targets.shape[1]):
+        projected_test = np.matmul(input_test, u.T)
+        subspace_test = np.zeros((input_test.shape[0], input_test.shape[1], n_dim, n_target + 1))
+        subspace_test[:, :, 0, :-1] = projected_test[:, :, :n_target]
+        if decoding == True:
+            decoded_test = np.zeros((input_test.shape[0], n_dim, n_target + 1))
+            if len(time_range) == 1:
+                activity_test = input_test[:, time_range[0], :]
+            else:
+                activity_test = np.mean(input_test[:, time_range, :], axis=1)
+            for target_id in range(targets_test.shape[1]):
+                decoded_test[:, 0, target_id] = decoder_L2[target_id].predict(activity_test).squeeze()
+    else:
+        subspace_test = []
+        decoded_test = []
+
+    for dim_id in range(1, n_dim):
+        if len(time_range) == 1:
+            activity = projected[:, time_range[0], n_target:]
+        else:
+            activity = np.mean(projected[:, time_range, n_target:], axis=1)
+        ax_nonorthogonal = np.zeros((activity.shape[1], n_target))
+        for cell_id in range(activity.shape[1]):
+            ax_nonorthogonal[cell_id, :] = model.fit(targets, activity[:, cell_id]).coef_.squeeze()
+        if decoding == True:
+            for target_id in range(n_target):
+                decoder_L2[target_id].fit(activity, targets[:, target_id])
+                decoded[:, dim_id, target_id] = decoder_L2[target_id].predict(activity).squeeze()
+        u, s, vh = np.linalg.svd(ax_nonorthogonal)
+        for target_id in range(n_target):
+            if np.dot(ax_nonorthogonal[:, target_id], u[target_id, :]) < 0:
+                u[target_id, :] = -u[target_id, :]
+            else:
+                u[target_id, :] = u[target_id, :]
+        projected = np.matmul(projected[:, :, n_target:], u.T)
+        subspace[:, :, dim_id, :-1] = projected[:, :, :n_target]
+
+        if input_test is not None:
+            if decoding == True:
+                if len(time_range) == 1:
+                    activity_test = projected_test[:, time_range[0], n_target:]
+                else:
+                    activity_test = np.mean(projected_test[:, time_range, n_target:], axis=1)
+                for target_id in range(targets_test.shape[1]):
+                    decoded_test[:, dim_id, target_id] = decoder_L2[target_id].predict(activity_test).squeeze()
+            projected_test = np.matmul(projected_test[:, :, n_target:], u.T)
+            subspace_test[:, :, dim_id, :-1] = projected_test[:, :, :n_target]
+
+    subspace_remained = projected[:, :, n_target:]
+    if len(time_range) == 1:
+        activity = subspace_remained[:, time_range[0], :]
+    else:
+        activity = np.mean(subspace_remained[:, time_range, :], axis=1)
+    pca_nontask = PCA(n_components=n_dim)
+    pca_nontask.fit(activity)
+    subspace[:, :, :, -1] = np.matmul(subspace_remained, pca_nontask.components_.T)
+    if len(time_range) == 1:
+        subspace_var = np.var(subspace[:, time_range[0], :, :], axis=0)
+        total_var = np.sum(np.var(input[:, time_range[0], :], axis=0))
+    else:
+        subspace_var = np.var(np.mean(subspace[:, time_range, :, :], axis=1), axis=0)
+        total_var = np.sum(np.var(np.mean(input[:, time_range, :], axis=1), axis=0))
+    if input_test is not None:
+        subspace_remained_test = projected_test[:, :, n_target:]
+        subspace_test[:, :, :, -1] = np.matmul(subspace_remained_test, pca_nontask.components_.T)
+        if len(time_range) == 1:
+            subspace_var_test = np.var(subspace_test[:, time_range[0], :, :], axis=0)
+            total_var_test = np.sum(np.var(input_test[:, time_range[0], :], axis=0))
+        else:
+            subspace_var_test = np.var(np.mean(subspace_test[:, time_range, :, :], axis=1), axis=0)
+            total_var_test = np.sum(np.var(np.mean(input_test[:, time_range, :], axis=1), axis=0))
+    else:
+        subspace_remained_test = []
+        subspace_test = []
+        subspace_var_test = []
+        total_var_test = []
+
+    r = np.zeros((n_target + 1, n_target, n_dim, 2))
+    for target_ax_id in range(n_target + 1):
+        for target_var_id in range(n_target):
             for dim_id in range(n_dim):
                 if len(time_range) == 1:
-                    r_test[target_id, dim_id, 0], r_test[target_id, dim_id, 1] = pearsonr(subspace_test[:, time_range[0], dim_id, target_id], targets_test[:, target_id])
+                    r[target_ax_id, target_var_id, dim_id, 0], r[target_ax_id, target_var_id, dim_id, 1] = pearsonr(subspace[:, time_range[0], dim_id, target_ax_id], targets[:, target_var_id])
                 else:
-                    r_test[target_id, dim_id, 0], r_test[target_id, dim_id, 1] = pearsonr(np.mean(subspace_test[:, time_range, dim_id, target_id], axis=1), targets_test[:, target_id])
+                    r[target_ax_id, target_var_id, dim_id, 0], r[target_ax_id, target_var_id, dim_id, 1] = pearsonr(np.mean(subspace[:, time_range, dim_id, target_ax_id], axis=1), targets[:, target_var_id])
+    if input_test is not None:
+        r_test = np.zeros((n_target + 1, n_target, n_dim, 2))
+        for target_ax_id in range(n_target + 1):
+            for target_var_id in range(n_target):
+                for dim_id in range(n_dim):
+                    if len(time_range) == 1:
+                        r_test[target_ax_id, target_var_id, dim_id, 0], r_test[target_ax_id, target_var_id, dim_id, 1] = pearsonr(subspace_test[:, time_range[0], dim_id, target_ax_id], targets_test[:, target_var_id])
+                    else:
+                        r_test[target_ax_id, target_var_id, dim_id, 0], r_test[target_ax_id, target_var_id, dim_id, 1] = pearsonr(np.mean(subspace_test[:, time_range, dim_id, target_ax_id], axis=1), targets_test[:, target_var_id])
     else:
         r_test = []
 
-    if axis_type == 'mante':
-        r_decoding_mante = np.zeros((targets.shape[1], n_dim, 2))
-        for target_id in range(targets.shape[1]):
+    if decoding == True:
+        r_decoded = np.zeros((n_target, n_dim, 2))
+        for target_id in range(n_target):
             for dim_id in range(n_dim):
-                r_decoding_mante[target_id, dim_id, 0], r_decoding_mante[target_id, dim_id, 1] = pearsonr(decoding_mante[:, dim_id, target_id], targets[:, target_id])
+                r_decoded[target_id, dim_id, 0], r_decoded[target_id, dim_id, 1] = pearsonr(decoded[:, dim_id, target_id], targets[:, target_id])
         if input_test is not None:
-            r_decoding_mante_test = np.zeros((targets.shape[1], n_dim, 2))
-            for target_id in range(targets.shape[1]):
+            r_decoded_test = np.zeros((n_target, n_dim, 2))
+            for target_id in range(n_target):
                 for dim_id in range(n_dim):
-                    r_decoding_mante_test[target_id, dim_id, 0], r_decoding_mante_test[target_id, dim_id, 1] = pearsonr(decoding_mante_test[:, dim_id, target_id], targets_test[:, target_id])
+                    r_decoded_test[target_id, dim_id, 0], r_decoded_test[target_id, dim_id, 1] = pearsonr(decoded_test[:, dim_id, target_id], targets_test[:, target_id])
         else:
-            r_decoding_test = []
-            r_decoding_mante_test = []
+            r_decoded_test = []
     else:
-        r_decoding_mante = []
-        r_decoding_mante_test = []
+        r_decoded = []
+        r_decoded_test = []
 
+    return subspace, subspace_remained, r, r_decoded, subspace_var, total_var, subspace_test, subspace_remained_test, r_test, r_decoded_test, subspace_var_test, total_var_test
 
-    return subspace, subspace_remained, r, r_test, r_decoding_mante, r_decoding_mante_test
