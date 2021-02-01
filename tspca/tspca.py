@@ -2,7 +2,7 @@
 
 # Author: Ryoma Hattori <rhattori0204@gmail.com>
 #
-# License:
+# License: MIT License
 
 from sklearn import linear_model
 from sklearn.decomposition import PCA
