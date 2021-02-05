@@ -10,7 +10,7 @@ from scipy.stats import pearsonr
 import numpy as np
 
 
-def tsPCA2(input, targets, time_range, n_dim, reg=None, preprocessing_pc=-1, input_test=None, targets_test=None, decoding=False):
+def tsPCA(input, targets, time_range, n_dim, reg=None, preprocessing_pc=-1, input_test=None, targets_test=None, decoding=False):
     if reg == None:
         model = linear_model.LinearRegression(n_jobs=-1, fit_intercept=True)
     elif reg == 'L1':
