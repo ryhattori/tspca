@@ -7,5 +7,5 @@ tsPCA decomposes high-dimensional data into low-dimensional orthogonal subspaces
 will make it available from PyPl
 
 ## How to use
-will write a Jupyter Notebook file with an example data set
+tsPCA_demo.ipynb describes an example of the basic implementation.
 
